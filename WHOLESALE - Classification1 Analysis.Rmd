@@ -1,0 +1,243 @@
+---
+title: "WHOLESALE - Classification1 Analysis"
+author: "Tubagus Fathul Arifin"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+     toc: true
+     toc_depth: 5
+     toc_float: true
+     theme: readable
+     highlight: breezedark
+     df_print: paged
+---
+
+```{r echo=FALSE, out.width="100%"}
+knitr::include_graphics("assets/WHOLESALE.jpg")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+library(tidyverse)
+library(gtools)
+library(gmodels)
+library(class)
+library(caret)
+```
+# **1. DATA INTRODUCTION**  
+  
+On this occasion, we will analyze using a clasification on the data `wholesale.csv`.  
+
+We will explore the target variable `channel` to be able to analyze how the influence of what variables are very influential for a data grouped as a particular channel.  
+  
+## **1.1. Data Preparation**  
+Read the data.
+```{r}
+wholesale <- read.csv("wholesale.csv")
+head(wholesale)
+```
+Check data structure.
+```{r}
+str(wholesale)
+```
+Check missing value.
+```{r}
+anyNA(wholesale)
+
+colSums(is.na(wholesale))
+```
+  
+## **1.2. Data Preprocessing**  
+Data Wrangling.  
+
+We will change the datatype of `Channel` into a *factor* and We will throw away the `Region` variable, since it is a class type data like our target variable and We don't need it.
+```{r}
+library(dplyr)
+wholesale <- wholesale %>% 
+  mutate(Channel = as.factor(Channel),
+         Region = as.factor(Region)) %>% 
+         select(-Region) 
+
+glimpse(wholesale)
+```
+  
+# **2. DATA ANALYSIS**  
+  
+## **2.1. Exploratory**  
+Check data patern.
+```{r}
+summary(wholesale)
+```
+Based on the `summary` above, we can see that there are no irregularities in each variable.  
+  
+Check the distribution proportion of **target class**
+```{r}
+prop.table(table(wholesale$Channel))
+
+table(wholesale$Channel)
+```
+When viewed from the proportion of the two classes, it is quite balanced, so we don't really need additional pre-processing to balance the proportion between the two target classes of variables.  
+  
+## **2.2. Cross Validation**  
+Splitting the data into data train(80%) and data test(20%).
+```{r}
+RNGkind(sample.kind = "Rounding")
+set.seed(417)
+
+# index sampling
+index <- sample(x = nrow(wholesale), size = nrow(wholesale)*0.85)
+
+# splitting
+wholesale_train <- wholesale[index , ]
+
+wholesale_test <- wholesale[-index , ]
+```
+Check the distribution proportion of **target class** from data train.
+```{r}
+prop.table(table(wholesale_train$Channel))
+
+table(wholesale_train$Channel)
+```
+The prportion is quite balanced.  
+  
+# **3. LOGISTIC REGRESSION**  
+
+We will make a logistic regression model to predict `Channel`. Based on the data and our business inquiry, We will use all the predictor variable for building the model.
+```{r}
+wholesale_LRMod <- glm(formula = Channel ~ ., data = wholesale_train, family = "binomial")
+
+summary(wholesale_LRMod)
+
+```
+  
+## **3.1. Model Fitting**
+In the first modeling, there are still many predictor variables that are not significant to the target variable, therefore we will try to do a model fitting using the `stepwise` method.
+```{r}
+wholesale_LRMod_step <- step(wholesale_LRMod, direction = "backward")
+
+summary(wholesale_LRMod_step)
+```
+  
+## **3.2. Prediction**  
+  
+By using the results from stepwise model, we will try to predict using the test data that we already have.  
+  
+We will predict the *probability* `Channel` for data **wholesale_test** and save it in a new column named `wholesale_pred`
+```{r}
+wholesale_test$wholesale_pred <- predict(wholesale_LRMod_step,
+                             wholesale_test,
+                             type = "response")
+
+wholesale_test
+```
+We will Classify the wholesale_test data based on `wholesale_pred` and save it in a new column named `channel_pred`.
+```{r}
+wholesale_test$channel_pred <- ifelse(wholesale_test$wholesale_pred > 0.5,
+                                      yes = "2",
+                                      no = "1")
+
+wholesale_test
+```
+  
+## **3.3. Evaluation**  
+To evaluate the model that we have created, we will use a confusion matrix.
+```{r}
+lr_cm <- confusionMatrix(as.factor(wholesale_test$channel_pred),
+                wholesale_test$Channel,
+                positive = "2")
+
+lr_cm
+```
+Based on business questions, the best metrics are `accuracy` & `sensitivity/recall`. Because we want to predict whether a customer belongs to a certain customer group, in this case we have a marketing strategy for each group.  
+  
+# **4. K-NN MODEL**  
+  
+In addition to predicting the logistic regression model, we will also make predictions using the K-NN method. Next, we will compare the results and we will take the best one.  
+  
+## **4.1. Picking optimum K**  
+Class Target.
+```{r}
+levels(wholesale_train$Channel)
+```
+Class Target = 2  
+  
+**k optimum** is the root of our data sum: `sqrt(nrow(data))`
+```{r}
+sqrt(nrow(wholesale_train))
+```
+Pay attention to the number of target classes
+   + Even target class -> odd number of k
+   + Odd target class -> even number of k  
+  
+**K optimum** is **19**. 
+  
+## **4.2. Data Preprocessing**  
+Cross Validation.
+```{r}
+RNGkind(sample.kind = "Rounding")
+set.seed(419)
+
+# index sampling
+index <- sample(x = nrow(wholesale), size = nrow(wholesale)*0.85)
+
+# splitting
+wholesale_KNNtrain <- wholesale[index , ]
+
+wholesale_KNNtest <- wholesale[-index , ]
+```
+For k-NN, separate predictor and label (target variable)
+```{r}
+# prediktor
+wholesale_train_x <- wholesale_KNNtrain %>% select_if(is.numeric)
+
+wholesale_test_x <- wholesale_KNNtest %>% select_if(is.numeric)
+
+# target
+wholesale_train_y <- wholesale_KNNtrain[,"Channel"]
+
+wholesale_test_y <- wholesale_KNNtest[,"Channel"]
+```
+The range of each variable is not too different so there is no need for feature rescaling in the *data pre-processing* stage.  
+  
+The K-NN method does not require prior modeling. So that predictions can be made immediately.
+```{r}
+wholesale_knn <- knn(train = wholesale_train_x,
+                 test = wholesale_test_x,
+                 cl = wholesale_train_y,
+                 k = 19)
+```
+  
+## **4.3. Evaluation**
+To evaluate the model that we have created, we will use a confusion matrix.
+```{r}
+knn_cm <- confusionMatrix(data = as.factor(wholesale_knn),
+                reference = as.factor(wholesale_test_y),
+                positive = "2")
+
+knn_cm
+```
+  
+# **5. CONCLUSION**  
+
+
+```{r}
+eval_lr <- data_frame(Accuracy = lr_cm$overall[1],
+           Recall = lr_cm$byClass[1],
+           Specificity = lr_cm$byClass[2],
+           Precision = lr_cm$byClass[3])
+
+eval_knn <- data_frame(Accuracy = knn_cm$overall[1],
+           Recall = knn_cm$byClass[1],
+           Specificity = knn_cm$byClass[2],
+           Precision = knn_cm$byClass[3])
+```
+Evaluation Comparison.
+```{r}
+eval_lr
+
+eval_knn
+```
+Based on the evaluation above, it can be seen that the results of the logistic regression have a better accuracy and sensitivity/recal.  
+  
+So it was decided that we would use a logistic regression model to answer future business questions.
